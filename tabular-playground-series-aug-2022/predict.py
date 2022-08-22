@@ -9,6 +9,7 @@ import lightgbm as lgb
 import optuna.integration.lightgbm as opt_lgb
 from sklearn.metrics import roc_auc_score, mean_squared_error
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import KNNImputer
 from sklearn.model_selection import RepeatedKFold, train_test_split
 from sklearn.linear_model import HuberRegressor, LogisticRegression
 from tqdm import tqdm
@@ -196,6 +197,11 @@ def huberregression(data: pd.DataFrame,) -> pd.DataFrame:
     return data
 
 
+def knn_naimputer(data: pd.DataFrame, n_range: int = 100):
+    imputer = KNNImputer(n_neighbors=3)
+    return imputer.fit_transform(data)
+
+
 def preprocess(data: pd.DataFrame) -> pd.DataFrame:
 
     data.set_index("id", drop=True, inplace=True)
@@ -212,19 +218,22 @@ def preprocess(data: pd.DataFrame) -> pd.DataFrame:
     endu = data["attribute_0"] * data["attribute_1"]
     area = data["attribute_2"] * data["attribute_3"]
     data = huberregression(data)
-    data = data[use_col + ["loading"]].copy()
+    data = pd.DataFrame(
+        knn_naimputer(data[use_col + ["loading"]]),
+        index=data.index,
+        columns=use_col + ["loading"]
+    )
     for alpha, beta in (
         (0, 1),
         (0, 2),
         (1, 2)
     ):
-        data[f"div_meas_{alpha}_{beta}"] = (
-            data[f"measurement_{alpha}"]
-            / (data[f"measurement_{beta}"] + 1)
+        col = [f"measurement_{alpha}", f"measurement_{beta}"]
+        data[f"div_meas_{alpha}_{beta}"] = data[col].apply(
+            lambda x: x[0] / (x[1] + 1), axis=1
         )
-        data[f"sub_meas_{alpha}_{beta}"] = (
-            data[f"measurement_{alpha}"]
-            - data[f"measurement_{beta}"]
+        data[f"sub_meas_{alpha}_{beta}"] = data[col].apply(
+            lambda x: x[0] - x[1], axis=1
         )
     num_data = data[num_col].aggregate(
         ["mean", "std", "min", "max"], axis=1
@@ -241,11 +250,11 @@ def preprocess(data: pd.DataFrame) -> pd.DataFrame:
         data[f"meas_num_{col}"] = num_data[col]
     for col in cat_data.columns:
         data[f"meas_cat_{col}"] = cat_data[col]
-    for col in use_col + ["loading"]:
-        data[f"miss_{col}"] = data[col].isna().astype(int)
-    data["total_missing_value"] = data[
-        [col for col in data.columns if col.split("_")[0] == "miss"]
-    ].sum(axis=1)
+    # for col in use_col + ["loading"]:
+    #    data[f"miss_{col}"] = data[col].isna().astype(int)
+    # data["total_missing_value"] = data[
+    #    [col for col in data.columns if col.split("_")[0] == "miss"]
+    # ].sum(axis=1)
     data["log_loading"] = np.log(data["loading"])
     data["area_capacity"] = np.log(data["loading"] / area)
     data["endurance"] = np.log(data["loading"] / endu)
@@ -289,15 +298,15 @@ match PARAM_SEARCH:
     case False:
         params = {
             'feature_pre_filter': False,
-            'lambda_l1': 0.23780855594894879,
-            'lambda_l2': 0.0011435326967608513,
+            'lambda_l1': 1.2747480809218594,
+            'lambda_l2': 0.003227973870823964,
             'num_leaves': 2,
-            'feature_fraction': 0.52,
-            'bagging_fraction': 0.44168344717293895,
-            'bagging_freq': 2,
-            'min_child_samples': 20
+            'feature_fraction': 0.748,
+            'bagging_fraction': 0.6568964999656102,
+            'bagging_freq': 3,
+            'min_child_samples': 50
         }
-        # roc_auc Score: 0.5884839982766031
+        # roc_auc Score: 0.5874136544358595
 # %%
 # lightgbm model
 params |= CFG.model_params
@@ -339,20 +348,19 @@ fig = px.bar(importance, x="col", y="importance")
 fig.show()
 # %%
 # logistic regression
-nona_train = train_data.fillna(train_data.median())
 params = {"max_iter": 500, "C": 0.05, "penalty": "l1", "solver": "liblinear"}
 res_score = []
 kf = RepeatedKFold(n_splits=3, n_repeats=10, random_state=37)
 for tr_idx, va_idx in tqdm(kf.split(train_data)):
-    tr_x, tr_y = nona_train.iloc[tr_idx], train_labels.iloc[tr_idx]
-    va_x, va_y = nona_train.iloc[va_idx], train_labels.iloc[va_idx]
+    tr_x, tr_y = train_data.iloc[tr_idx], train_labels.iloc[tr_idx]
+    va_x, va_y = train_data.iloc[va_idx], train_labels.iloc[va_idx]
     lgs_model = LogisticRegression(**params)
     lgs_model.fit(tr_x, tr_y)
     res_score.append(
         roc_auc_score(va_y, lgs_model.predict_proba(va_x)[:, 1])
     )
 lgs_model = LogisticRegression(**params)
-lgs_model.fit(nona_train, train_labels)
+lgs_model.fit(train_data, train_labels)
 print(f"Logistic:{np.mean(res_score)}")
 importance = pd.DataFrame(
     data={
@@ -362,12 +370,11 @@ importance = pd.DataFrame(
 ).sort_values(["importance"])
 fig = px.bar(importance, x="col", y="importance")
 fig.show()
-# Logistic:0.5865637546208611
+# Logistic:0.587433089263244
 # %%
 # predict
 lgb_result = lgb_model.predict_proba(test_data)[:, 1]
-lgs_result = lgs_model.predict_proba(
-    test_data.fillna(test_data.median()))[:, 1]
+lgs_result = lgs_model.predict_proba(test_data)[:, 1]
 result = lgb_result * 0.2 + lgs_result * 0.8
 res_df = pd.DataFrame(
     data={"failure": result},
