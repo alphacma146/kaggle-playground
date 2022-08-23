@@ -342,15 +342,15 @@ match PARAM_SEARCH:
     case False:
         params = {
             'feature_pre_filter': False,
-            'lambda_l1': 1.2747480809218594,
-            'lambda_l2': 0.003227973870823964,
+            'lambda_l1': 1.55599563289676e-06,
+            'lambda_l2': 0.1452414084683167,
             'num_leaves': 2,
             'feature_fraction': 0.748,
-            'bagging_fraction': 0.6568964999656102,
-            'bagging_freq': 3,
-            'min_child_samples': 50
+            'bagging_fraction': 0.4691364685194263,
+            'bagging_freq': 1,
+            'min_child_samples': 20
         }
-        # roc_auc Score: 0.5874136544358595
+        # roc_auc Score: 0.5878060455704082
 # %%
 # lightgbm model
 params |= CFG.model_params
@@ -419,7 +419,7 @@ importance = pd.DataFrame(
 ).sort_values(["importance"])
 fig = px.bar(importance, x="col", y="importance")
 fig.show()
-# logistic score:0.5883781398139811
+# Logistic:0.5873830664264279
 # %%
 # predict
 lgb_result = lgb_model.predict_proba(test_data)[:, 1]
