@@ -36,6 +36,50 @@ class Config:
     })
     corr_dict: dict = field(
         default_factory=lambda: {
+            # 'measurement_11': {
+            #    'A': [],
+            #    'B': ['measurement_10'],
+            #    'C': [],
+            #    'D': [],
+            #    'E': ['measurement_10'],
+            #    'F': ['measurement_10'],
+            #    'G': ['measurement_10'],
+            #    'H': ['measurement_10'],
+            #    'I': [],
+            # },
+            # 'measurement_12': {
+            #    'A': ['measurement_11'],
+            #    'B': [],
+            #    'C': ['measurement_11'],
+            #    'D': ['measurement_10'],
+            #    'E': ['measurement_10', 'measurement_11'],
+            #    'F': [],
+            #    'G': [],
+            #    'H': ['measurement_10', 'measurement_11'],
+            #    'I': ['measurement_11']
+            # },
+            # 'measurement_13': {
+            #    'A': [],
+            #    'B': ['measurement_10', 'measurement_11'],
+            #    'C': [],
+            #    'D': [],
+            #    'E': [],
+            #    'F': ['measurement_10', 'measurement_11'],
+            #    'G': [],
+            #    'H': [],
+            #    'I': ['measurement_11', 'measurement_12']
+            # },
+            'measurement_14': {
+                'A': ['measurement_11', 'measurement_12'],
+                'B': [],
+                'C': ['measurement_11'],
+                'D': ['measurement_10', 'measurement_12'],
+                'E': ['measurement_10', 'measurement_11', 'measurement_12'],
+                'F': [],
+                'G': ['measurement_10', 'measurement_11'],
+                'H': [],
+                'I': ['measurement_11', 'measurement_12', 'measurement_13']
+            },
             'measurement_15': {
                 'A': ['measurement_11', 'measurement_12'],
                 'B': ['measurement_10', 'measurement_11', 'measurement_13'],
@@ -348,10 +392,15 @@ fig = px.bar(importance, x="col", y="importance")
 fig.show()
 # %%
 # logistic regression
-params = {"max_iter": 500, "C": 0.05, "penalty": "l1", "solver": "liblinear"}
-res_score = []
+params = {
+    "max_iter": 500,
+    "C": 0.05,
+    "dual": False,
+    "penalty": "l2",
+    "solver": "newton-cg"
+}
 kf = RepeatedKFold(n_splits=3, n_repeats=10, random_state=37)
-for tr_idx, va_idx in tqdm(kf.split(train_data)):
+for tr_idx, va_idx in tqdm(kf.split(train_data, train_labels)):
     tr_x, tr_y = train_data.iloc[tr_idx], train_labels.iloc[tr_idx]
     va_x, va_y = train_data.iloc[va_idx], train_labels.iloc[va_idx]
     lgs_model = LogisticRegression(**params)
@@ -370,7 +419,7 @@ importance = pd.DataFrame(
 ).sort_values(["importance"])
 fig = px.bar(importance, x="col", y="importance")
 fig.show()
-# Logistic:0.587433089263244
+# logistic score:0.5883781398139811
 # %%
 # predict
 lgb_result = lgb_model.predict_proba(test_data)[:, 1]
