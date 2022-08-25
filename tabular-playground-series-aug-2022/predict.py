@@ -10,12 +10,17 @@ import optuna.integration.lightgbm as opt_lgb
 from sklearn.metrics import roc_auc_score, mean_squared_error
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import KNNImputer
-from sklearn.model_selection import RepeatedKFold, train_test_split
+from sklearn.model_selection import (
+    RepeatedKFold,
+    train_test_split,
+    LeaveOneGroupOut
+)
 from sklearn.linear_model import HuberRegressor, LogisticRegression
+from skopt import BayesSearchCV
 from tqdm import tqdm
 import plotly.express as px
 
-PARAM_SEARCH = True
+PARAM_SEARCH = False
 
 
 @dataclass
@@ -310,6 +315,7 @@ ss = StandardScaler()
 train_data = pd.read_csv(CFG.train_path)
 test_data = pd.read_csv(CFG.test_path)
 train_labels = train_data["failure"].copy()
+p_code = train_data["product_code"]
 meas_col = [
     col for col in train_data.columns
     if col.startswith("measurement") and col not in CFG.category_params
@@ -322,7 +328,7 @@ test_data = preprocess(test_data)
 print("train_data:", train_data.shape)
 print("test_data: ", test_data.shape)
 # %%
-# tuning
+# lgb parameter tuning
 match PARAM_SEARCH:
     case True:
         train_set = lgb.Dataset(train_data, train_labels)
@@ -348,9 +354,9 @@ match PARAM_SEARCH:
             'feature_fraction': 0.748,
             'bagging_fraction': 0.4691364685194263,
             'bagging_freq': 1,
-            'min_child_samples': 20
+            'min_child_samples': 20,
         }
-        # roc_auc Score: 0.5878060455704082
+        # roc_auc Score: 0.587890614645989
 # %%
 # lightgbm model
 params |= CFG.model_params
@@ -391,14 +397,40 @@ importance = pd.DataFrame(
 fig = px.bar(importance, x="col", y="importance")
 fig.show()
 # %%
+# logistic paramater tuning
+match PARAM_SEARCH:
+    case True:
+        logo = LeaveOneGroupOut()
+        param = {
+            "C": np.arange(0.01, 0.05, 0.01),
+            # "C": np.concatenate([
+            #    np.arange(0.001, 0.005, 0.001), np.arange(0.01, 0.05, 0.01)
+            # ]),
+            "max_iter": np.arange(500, 1100, 100),
+            "penalty": ["l2", "l1"],
+            "solver": ['saga'],
+            # "l1_ratio": np.arange(0.1, 0.5, 0.1)
+        }
+        bs_cv = BayesSearchCV(
+            LogisticRegression(n_jobs=-1),
+            param,
+            cv=logo.split(train_data, train_labels, p_code),
+            n_iter=1000,
+            verbose=3
+        )
+        bs_cv.fit(train_data, train_labels)
+        params = bs_cv.best_params_
+    case False:
+        params = {
+            "C": 0.05,
+            "max_iter": 500,
+            "penalty": "l2",
+            "solver": "saga",
+            "dual": False,
+        }
+        # Logistic:0.5873830664264279
+# %%
 # logistic regression
-params = {
-    "max_iter": 500,
-    "C": 0.05,
-    "dual": False,
-    "penalty": "l2",
-    "solver": "newton-cg"
-}
 kf = RepeatedKFold(n_splits=3, n_repeats=10, random_state=37)
 for tr_idx, va_idx in tqdm(kf.split(train_data, train_labels)):
     tr_x, tr_y = train_data.iloc[tr_idx], train_labels.iloc[tr_idx]
@@ -408,9 +440,10 @@ for tr_idx, va_idx in tqdm(kf.split(train_data, train_labels)):
     res_score.append(
         roc_auc_score(va_y, lgs_model.predict_proba(va_x)[:, 1])
     )
+print(params)
+print(f"Logistic:{np.mean(res_score)}")
 lgs_model = LogisticRegression(**params)
 lgs_model.fit(train_data, train_labels)
-print(f"Logistic:{np.mean(res_score)}")
 importance = pd.DataFrame(
     data={
         "col": train_data.columns,
@@ -419,20 +452,35 @@ importance = pd.DataFrame(
 ).sort_values(["importance"])
 fig = px.bar(importance, x="col", y="importance")
 fig.show()
-# Logistic:0.5873830664264279
 # %%
 # predict
 lgb_result = lgb_model.predict_proba(test_data)[:, 1]
 lgs_result = lgs_model.predict_proba(test_data)[:, 1]
 result = lgb_result * 0.2 + lgs_result * 0.8
 res_df = pd.DataFrame(
-    data={"failure": result},
+    data={
+        "lgb_result": lgb_result,
+        "lgs_result": lgs_result,
+        "ave 2:8": result
+    },
     index=test_data.index
 )
-fig = px.histogram(res_df)
+fig = px.histogram(res_df, x=res_df.columns)
+fig.update_layout(barmode='overlay')
+fig.update_traces(opacity=0.70)
 fig.show()
 sub_df = pd.read_csv(CFG.sample_path, usecols=["id"])
-sub_df = sub_df.merge(res_df, left_on="id", right_index=True)
+sub_df = sub_df.merge(
+    pd.DataFrame(
+        data={"failure": result},
+        index=test_data.index
+    ),
+    left_on="id",
+    right_index=True
+)
 print(sub_df.head(10))
+sub_df[["failure"]].boxplot()
+q1 = sub_df["failure"].quantile(.25)
+q2 = sub_df["failure"].quantile(.75)
 sub_df.to_csv(CFG.result_folder / "result_submission.csv", index=False)
 # %%
