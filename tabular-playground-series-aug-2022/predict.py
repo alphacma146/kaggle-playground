@@ -422,13 +422,12 @@ match PARAM_SEARCH:
         params = bs_cv.best_params_
     case False:
         params = {
-            "C": 0.05,
+            "C": 0.02,
             "max_iter": 500,
-            "penalty": "l2",
+            "penalty": "l1",
             "solver": "saga",
-            "dual": False,
         }
-        # Logistic:0.5873830664264279
+        # Logistic:0.5874957769764539
 # %%
 # logistic regression
 kf = RepeatedKFold(n_splits=3, n_repeats=10, random_state=37)
