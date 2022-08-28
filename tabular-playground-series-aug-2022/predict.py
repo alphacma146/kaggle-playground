@@ -423,7 +423,7 @@ match PARAM_SEARCH:
     case False:
         params = {
             "C": 0.02,
-            "max_iter": 500,
+            "max_iter": 700,
             "penalty": "l1",
             "solver": "saga",
         }
@@ -455,7 +455,7 @@ fig.show()
 # predict
 lgb_result = lgb_model.predict_proba(test_data)[:, 1]
 lgs_result = lgs_model.predict_proba(test_data)[:, 1]
-result = lgb_result * 0.2 + lgs_result * 0.8
+result = lgb_result * 0.3 + lgs_result * 0.7
 res_df = pd.DataFrame(
     data={
         "lgb_result": lgb_result,
