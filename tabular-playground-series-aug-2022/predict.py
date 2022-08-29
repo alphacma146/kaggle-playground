@@ -477,9 +477,13 @@ sub_df = sub_df.merge(
     left_on="id",
     right_index=True
 )
-print(sub_df.head(10))
 sub_df[["failure"]].boxplot()
-q1 = sub_df["failure"].quantile(.25)
-q2 = sub_df["failure"].quantile(.75)
+q1 = sub_df["failure"].quantile(.1)
+q2 = sub_df["failure"].quantile(.9)
+sub_df["failure"].where(sub_df["failure"] <= q2, 1.0, inplace=True)
+sub_df["failure"].where(sub_df["failure"] >= q1, 0.0, inplace=True)
+print(sub_df.head(10))
+fig = px.histogram(sub_df, x="failure")
+fig.show()
 sub_df.to_csv(CFG.result_folder / "result_submission.csv", index=False)
 # %%
