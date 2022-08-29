@@ -206,6 +206,15 @@ fig.show()
 # %%
 # missing
 print(train_data.isnull().sum())
+fig = px.imshow(train_data.isnull())
+if CREATE_PICTURE:
+    fig.write_image(r"src\missing_value_train.svg")
+fig.show()
+print(test_data.isnull().sum())
+fig = px.imshow(test_data.isnull())
+if CREATE_PICTURE:
+    fig.write_image(r"src\missing_value_test.svg")
+fig.show()
 for col in ("measurement_0", "measurement_1", "measurement_2"):
     print(train_data[col].unique(), test_data[col].unique())
 # %%
