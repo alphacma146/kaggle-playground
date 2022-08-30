@@ -8,7 +8,7 @@ import pandas as pd
 import lightgbm as lgb
 import optuna.integration.lightgbm as opt_lgb
 from sklearn.metrics import roc_auc_score, mean_squared_error
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.impute import KNNImputer
 from sklearn.model_selection import (
     RepeatedKFold,
@@ -304,6 +304,7 @@ def preprocess(data: pd.DataFrame) -> pd.DataFrame:
     # data["total_missing_value"] = data[
     #    [col for col in data.columns if col.split("_")[0] == "miss"]
     # ].sum(axis=1)
+    data["measure_3x5"] = data["measurement_3"] * data["measurement_5"]
     data["log_loading"] = np.log(data["loading"])
     data["area_capacity"] = np.log(data["loading"] / area)
     data["endurance"] = np.log(data["loading"] / endu)
@@ -348,15 +349,15 @@ match PARAM_SEARCH:
     case False:
         params = {
             'feature_pre_filter': False,
-            'lambda_l1': 1.55599563289676e-06,
-            'lambda_l2': 0.1452414084683167,
+            'lambda_l1': 0.00010903514484776173,
+            'lambda_l2': 5.349836649948494,
             'num_leaves': 2,
-            'feature_fraction': 0.748,
-            'bagging_fraction': 0.4691364685194263,
-            'bagging_freq': 1,
-            'min_child_samples': 20,
+            'feature_fraction': 0.652,
+            'bagging_fraction': 0.4395820155496217,
+            'bagging_freq': 2,
+            'min_child_samples': 20
         }
-        # roc_auc Score: 0.587890614645989
+        # roc_auc Score: 0.5879371093950126
 # %%
 # lightgbm model
 params |= CFG.model_params
@@ -398,6 +399,29 @@ fig = px.bar(importance, x="col", y="importance")
 fig.show()
 # %%
 # logistic paramater tuning
+mms = MinMaxScaler(feature_range=(0, 100), copy=True)
+mms.fit(train_data)
+lgs_train = pd.DataFrame(
+    mms.transform(train_data),
+    index=train_data.index,
+    columns=train_data.columns
+)
+lgs_model = LogisticRegression(
+    C=0.05,
+    max_iter=1000,
+    penalty="l1",
+    solver="saga"
+)
+lgs_model.fit(lgs_train, train_labels)
+importance = pd.DataFrame(
+    data={
+        "col": lgs_train.columns,
+        "importance": np.abs(lgs_model.coef_.ravel())
+    }
+).sort_values(["importance"])
+print(importance)
+lgs_cols = importance[importance["importance"] > 0.002].col
+lgs_train = train_data[lgs_cols]
 match PARAM_SEARCH:
     case True:
         logo = LeaveOneGroupOut()
@@ -406,7 +430,7 @@ match PARAM_SEARCH:
             # "C": np.concatenate([
             #    np.arange(0.001, 0.005, 0.001), np.arange(0.01, 0.05, 0.01)
             # ]),
-            "max_iter": np.arange(500, 1100, 100),
+            "max_iter": np.arange(1000, 2100, 100),
             "penalty": ["l2", "l1"],
             "solver": ['saga'],
             # "l1_ratio": np.arange(0.1, 0.5, 0.1)
@@ -414,27 +438,27 @@ match PARAM_SEARCH:
         bs_cv = BayesSearchCV(
             LogisticRegression(n_jobs=-1),
             param,
-            cv=logo.split(train_data, train_labels, p_code),
+            cv=logo.split(lgs_train, train_labels, p_code),
             n_iter=1000,
             verbose=3
         )
-        bs_cv.fit(train_data, train_labels)
+        bs_cv.fit(lgs_train, train_labels)
         params = bs_cv.best_params_
     case False:
         params = {
             "C": 0.02,
-            "max_iter": 700,
+            "max_iter": 1500,
             "penalty": "l1",
             "solver": "saga",
         }
-        # Logistic:0.5874957769764539
+        # Logistic:0.588662039994045
 # %%
 # logistic regression
-kf = RepeatedKFold(n_splits=3, n_repeats=10, random_state=37)
-for tr_idx, va_idx in tqdm(kf.split(train_data, train_labels)):
-    tr_x, tr_y = train_data.iloc[tr_idx], train_labels.iloc[tr_idx]
-    va_x, va_y = train_data.iloc[va_idx], train_labels.iloc[va_idx]
-    lgs_model = LogisticRegression(**params)
+logo = LeaveOneGroupOut()
+for tr_idx, va_idx in tqdm(logo.split(lgs_train, train_labels, p_code)):
+    tr_x, tr_y = lgs_train.iloc[tr_idx], train_labels.iloc[tr_idx]
+    va_x, va_y = lgs_train.iloc[va_idx], train_labels.iloc[va_idx]
+    lgs_model = LogisticRegression(**params, n_jobs=-1)
     lgs_model.fit(tr_x, tr_y)
     res_score.append(
         roc_auc_score(va_y, lgs_model.predict_proba(va_x)[:, 1])
@@ -442,10 +466,10 @@ for tr_idx, va_idx in tqdm(kf.split(train_data, train_labels)):
 print(params)
 print(f"Logistic:{np.mean(res_score)}")
 lgs_model = LogisticRegression(**params)
-lgs_model.fit(train_data, train_labels)
+lgs_model.fit(lgs_train, train_labels)
 importance = pd.DataFrame(
     data={
-        "col": train_data.columns,
+        "col": lgs_train.columns,
         "importance": np.abs(lgs_model.coef_.ravel())
     }
 ).sort_values(["importance"])
@@ -453,8 +477,9 @@ fig = px.bar(importance, x="col", y="importance")
 fig.show()
 # %%
 # predict
+lgs_test = test_data[lgs_cols]
 lgb_result = lgb_model.predict_proba(test_data)[:, 1]
-lgs_result = lgs_model.predict_proba(test_data)[:, 1]
+lgs_result = lgs_model.predict_proba(lgs_test)[:, 1]
 result = lgb_result * 0.3 + lgs_result * 0.7
 res_df = pd.DataFrame(
     data={
@@ -478,8 +503,8 @@ sub_df = sub_df.merge(
     right_index=True
 )
 sub_df[["failure"]].boxplot()
-q1 = sub_df["failure"].quantile(.1)
-q2 = sub_df["failure"].quantile(.9)
+q1 = sub_df["failure"].quantile(.05)
+q2 = sub_df["failure"].quantile(.95)
 sub_df["failure"].where(sub_df["failure"] <= q2, 1.0, inplace=True)
 sub_df["failure"].where(sub_df["failure"] >= q1, 0.0, inplace=True)
 print(sub_df.head(10))
