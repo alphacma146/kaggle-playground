@@ -8,7 +8,8 @@ import pandas as pd
 import lightgbm as lgb
 import optuna.integration.lightgbm as opt_lgb
 from sklearn.metrics import roc_auc_score, mean_squared_error
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import RFECV
 from sklearn.impute import KNNImputer
 from sklearn.model_selection import (
     RepeatedKFold,
@@ -16,6 +17,7 @@ from sklearn.model_selection import (
     LeaveOneGroupOut
 )
 from sklearn.linear_model import HuberRegressor, LogisticRegression
+from imblearn.over_sampling import SMOTE
 from skopt import BayesSearchCV
 from tqdm import tqdm
 import plotly.express as px
@@ -39,6 +41,12 @@ class Config:
         "max_bins": 255,
         "learning_rate": 0.05
     })
+    model_weight: dict = field(
+        default_factory=lambda: {
+            "LightGBM": 30,
+            "LogisticRegression": 70
+        }
+    )
     corr_dict: dict = field(
         default_factory=lambda: {
             # 'measurement_11': {
@@ -329,6 +337,24 @@ test_data = preprocess(test_data)
 print("train_data:", train_data.shape)
 print("test_data: ", test_data.shape)
 # %%
+# Over Sampling
+sm = SMOTE(random_state=37)
+resampling = [
+    sm.fit_resample(train_data.iloc[item], train_labels.iloc[item])
+    for item in [
+        p_code[p_code == p_index].index
+        for p_index in p_code.unique()
+    ]
+]
+train_data = pd.concat([it[0] for it in resampling], axis=0)
+train_labels = pd.concat([it[1] for it in resampling], axis=0)
+p_code = pd.Series(
+    [x for piece in [
+        [p] * len(r[0]) for (p, r) in zip(p_code.unique(), resampling)
+    ] for x in piece],
+    index=train_data.index
+)
+# %%
 # lgb parameter tuning
 match PARAM_SEARCH:
     case True:
@@ -349,15 +375,15 @@ match PARAM_SEARCH:
     case False:
         params = {
             'feature_pre_filter': False,
-            'lambda_l1': 0.00010903514484776173,
-            'lambda_l2': 5.349836649948494,
-            'num_leaves': 2,
-            'feature_fraction': 0.652,
-            'bagging_fraction': 0.4395820155496217,
+            'lambda_l1': 0.0006910775905707165,
+            'lambda_l2': 0.0029683558477403287,
+            'num_leaves': 254,
+            'feature_fraction': 0.7,
+            'bagging_fraction': 0.7249847419477815,
             'bagging_freq': 2,
             'min_child_samples': 20
         }
-        # roc_auc Score: 0.5879371093950126
+        # roc_auc Score: 0.9237822837583836
 # %%
 # lightgbm model
 params |= CFG.model_params
@@ -399,37 +425,35 @@ fig = px.bar(importance, x="col", y="importance")
 fig.show()
 # %%
 # logistic paramater tuning
-mms = MinMaxScaler(feature_range=(0, 100), copy=True)
-mms.fit(train_data)
-lgs_train = pd.DataFrame(
-    mms.transform(train_data),
-    index=train_data.index,
-    columns=train_data.columns
+logo = LeaveOneGroupOut()
+selector = RFECV(
+    LogisticRegression(
+        C=0.02,
+        max_iter=2000,
+        penalty="l1",
+        solver="saga"
+    ),
+    min_features_to_select=16,
+    cv=logo.split(train_data, train_labels, p_code),
+    n_jobs=-1
 )
-lgs_model = LogisticRegression(
-    C=0.05,
-    max_iter=1000,
-    penalty="l1",
-    solver="saga"
-)
-lgs_model.fit(lgs_train, train_labels)
+selector.fit(train_data, train_labels)
 importance = pd.DataFrame(
     data={
-        "col": lgs_train.columns,
-        "importance": np.abs(lgs_model.coef_.ravel())
+        "col": train_data.columns,
+        "mask": selector.get_support()
     }
-).sort_values(["importance"])
+)
 print(importance)
-lgs_cols = importance[importance["importance"] > 0.002].col
-lgs_train = train_data[lgs_cols]
+lgs_train = pd.DataFrame(
+    selector.transform(train_data),
+    index=train_data.index,
+    columns=selector.get_feature_names_out()
+)
 match PARAM_SEARCH:
     case True:
-        logo = LeaveOneGroupOut()
         param = {
-            "C": np.arange(0.01, 0.05, 0.01),
-            # "C": np.concatenate([
-            #    np.arange(0.001, 0.005, 0.001), np.arange(0.01, 0.05, 0.01)
-            # ]),
+            "C": np.arange(0.001, 0.011, 0.001),
             "max_iter": np.arange(1000, 2100, 100),
             "penalty": ["l2", "l1"],
             "solver": ['saga'],
@@ -439,22 +463,21 @@ match PARAM_SEARCH:
             LogisticRegression(n_jobs=-1),
             param,
             cv=logo.split(lgs_train, train_labels, p_code),
-            n_iter=1000,
+            n_iter=300,
             verbose=3
         )
         bs_cv.fit(lgs_train, train_labels)
         params = bs_cv.best_params_
     case False:
         params = {
-            "C": 0.02,
+            "C": 0.008,
             "max_iter": 1500,
             "penalty": "l1",
             "solver": "saga",
         }
-        # Logistic:0.588662039994045
+        # Logistic:0.8767955227146526
 # %%
 # logistic regression
-logo = LeaveOneGroupOut()
 for tr_idx, va_idx in tqdm(logo.split(lgs_train, train_labels, p_code)):
     tr_x, tr_y = lgs_train.iloc[tr_idx], train_labels.iloc[tr_idx]
     va_x, va_y = lgs_train.iloc[va_idx], train_labels.iloc[va_idx]
@@ -477,10 +500,18 @@ fig = px.bar(importance, x="col", y="importance")
 fig.show()
 # %%
 # predict
-lgs_test = test_data[lgs_cols]
+lgs_test = pd.DataFrame(
+    selector.transform(test_data),
+    index=test_data.index,
+    columns=selector.get_feature_names_out()
+)
 lgb_result = lgb_model.predict_proba(test_data)[:, 1]
 lgs_result = lgs_model.predict_proba(lgs_test)[:, 1]
-result = lgb_result * 0.3 + lgs_result * 0.7
+result = np.average(
+    [lgb_result, lgs_result],
+    weights=list(CFG.model_weight.values()),
+    axis=0
+)
 res_df = pd.DataFrame(
     data={
         "lgb_result": lgb_result,
@@ -505,8 +536,8 @@ sub_df = sub_df.merge(
 sub_df[["failure"]].boxplot()
 q1 = sub_df["failure"].quantile(.05)
 q2 = sub_df["failure"].quantile(.95)
-sub_df["failure"].where(sub_df["failure"] <= q2, 1.0, inplace=True)
-sub_df["failure"].where(sub_df["failure"] >= q1, 0.0, inplace=True)
+# sub_df["failure"].where(sub_df["failure"] <= q2, 1.0, inplace=True)
+# sub_df["failure"].where(sub_df["failure"] >= q1, 0.0, inplace=True)
 print(sub_df.head(10))
 fig = px.histogram(sub_df, x="failure")
 fig.show()
