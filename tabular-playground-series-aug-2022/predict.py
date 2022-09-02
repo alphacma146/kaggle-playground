@@ -1,5 +1,5 @@
 # %%
-# Standerd lib
+# Standard lib
 from pathlib import Path
 from dataclasses import dataclass, field
 # Third party
@@ -207,6 +207,9 @@ CFG = Config()
 
 
 def huberregression(data: pd.DataFrame,) -> pd.DataFrame:
+    """
+    search epsilon recursively
+    """
 
     def fit_model(
         x,
@@ -254,12 +257,19 @@ def huberregression(data: pd.DataFrame,) -> pd.DataFrame:
     return data
 
 
-def knn_naimputer(data: pd.DataFrame, n_range: int = 100):
+def knn_naimputer(data: pd.DataFrame):
+    """
+    fill in missing value
+    """
     imputer = KNNImputer(n_neighbors=3)
     return imputer.fit_transform(data)
 
 
 def preprocess(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    huberregression, k-nearest neighbor
+    transform log scale and aggregate
+    """
 
     data.set_index("id", drop=True, inplace=True)
     use_col = [
