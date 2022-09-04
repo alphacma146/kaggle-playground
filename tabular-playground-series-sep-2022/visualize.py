@@ -104,7 +104,6 @@ def timescale_lineplot(data: pd.DataFrame, title: str):
     )
     fig.update_layout(
         margin={"r": 10, "t": 10, "l": 10, "b": 40},
-        width=800,
         height=600,
         legend={
             "yanchor": "top",
@@ -134,4 +133,30 @@ for country in train_data["country"].unique():
         train_data.query(f"country=='{country}'"),
         country
     )
+# %%
+# sunburst
+fig = px.sunburst(
+    train_data,
+    path=[
+        "country",
+        "store",
+        "product"
+    ],
+    values="num_sold"
+)
+fig.update_layout(
+    title={
+        "text": "Sunburst num_sold",
+        "font": {"size": 22, "color": "black"},
+        "x": 0.05,
+        "y": 0.95,
+    },
+    margin_l=10,
+    margin_b=10,
+    margin_t=10,
+    height=450,
+)
+if CREATE_IMAGE:
+    fig.write_image(r"src\numsold_sunburst.svg")
+fig.show()
 # %%
