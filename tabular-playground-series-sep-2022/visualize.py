@@ -121,7 +121,8 @@ def timescale_lineplot(data: pd.DataFrame, title: str):
         xaxis={
             "rangeslider": {"visible": True, "thickness": 0.01},
             "type": "date"
-        }
+        },
+        yaxis_range=[0, 1000]
     )
     if CREATE_IMAGE:
         fig.write_image(rf"src\timescale_{title}.svg")
