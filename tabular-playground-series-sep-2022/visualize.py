@@ -160,3 +160,76 @@ if CREATE_IMAGE:
     fig.write_image(r"src\numsold_sunburst.svg")
 fig.show()
 # %%
+
+
+def auto_corr(df: pd.Series, k: int) -> pd.DataFrame:
+    y_avg = df.mean()
+    df_len = len(df)
+    data = df.to_list()
+
+    sum_of_covariance = 0
+    for i in range(k, df_len):
+        covar = (data[i] - y_avg) * (data[i - k] - y_avg)
+        sum_of_covariance += covar
+
+    sum_of_denominator = 0
+    for j in range(df_len):
+        demoni = np.square(data[j] - y_avg)
+        sum_of_denominator += demoni
+
+    return sum_of_covariance / sum_of_denominator
+
+
+def plot_bar(df: pd.DataFrame, title: str):
+    fig = px.bar(
+        df,
+        x="lag",
+        y="auto_corr",
+        color="store",
+        barmode="group",
+    )
+    fig.update_layout(
+        title={
+            "text": title,
+            "font": {"size": 22, "color": "black"},
+            "x": 0.1,
+            "y": 0.95,
+        },
+        legend={
+            "yanchor": "top",
+            "y": 0.98,
+            "xanchor": "right",
+            "x": 0.99
+        },
+        margin={"r": 10, "t": 10, "l": 0, "b": 0},
+        height=450,
+    )
+    if CREATE_IMAGE:
+        fig.write_image(rf"src\auto_corr_{title}.svg")
+    fig.show()
+
+
+LAG_RANGE = 366
+store_list = train_data["store"].unique()
+for country in train_data["country"].unique():
+    res_dict = {}
+    for store in store_list:
+        data = train_data.query(f"country=='{country}' and store=='{store}'")
+        data = data[["date", "num_sold"]].groupby("date").mean()
+        res_dict[store] = [
+            auto_corr(train_data["num_sold"], count)
+            for count in range(LAG_RANGE)
+        ]
+    data = (
+        pd
+        .DataFrame(res_dict, index=range(LAG_RANGE))
+        .stack(level=0)
+        .reset_index()
+        .rename(columns={
+            "level_0": "lag",
+            "level_1": "store",
+            0: "auto_corr"
+        })
+    )
+    plot_bar(data, country)
+# %%
