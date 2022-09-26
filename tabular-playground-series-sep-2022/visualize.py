@@ -233,3 +233,41 @@ for country in train_data["country"].unique():
     )
     plot_bar(data, country)
 # %%
+product_ratio_df = (
+    train_data
+    .groupby(["date", "product"])["num_sold"]
+    .sum()
+    .reset_index()
+    .pivot(index="date", columns="product", values="num_sold")
+    .apply(lambda x: x / x.sum(), axis=1)
+    .stack()
+    .rename("ratios")
+    .reset_index()
+)
+product_ratio_df.head()
+fig = px.line(
+    product_ratio_df,
+    x="date",
+    y="ratios",
+    color="product",
+)
+fig.update_layout(
+    margin={"r": 10, "t": 10, "l": 10, "b": 40},
+    height=600,
+    legend={
+        "orientation": "h",
+        "yanchor": "top",
+        "y": 0.99,
+        "xanchor": "left",
+        "x": 0.1
+    },
+    xaxis={
+        "rangeslider": {"visible": True, "thickness": 0.01},
+        "type": "date"
+    },
+    yaxis_range=[0.14, 0.39]
+)
+if CREATE_IMAGE:
+    fig.write_image(r"src\seasonally.svg")
+fig.show()
+# %%
