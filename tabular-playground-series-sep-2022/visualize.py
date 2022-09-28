@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from plotly import express as px
 
-CREATE_IMAGE = True
+CREATE_IMAGE = False
 
 
 @dataclass
