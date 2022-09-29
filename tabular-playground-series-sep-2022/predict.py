@@ -25,7 +25,7 @@ class Config:
         "objective": "regression",
         "boosting_type": "gbdt",
         "max_bins": 255,
-        "metric": "rmse",
+        "metric": "mse",
         "learning_rate": 0.05
     })
     national_holidays: dict = field(default_factory=lambda: {
@@ -81,6 +81,12 @@ class Config:
             2021: 30_090,
         }
     })
+    product_replace: dict = field(default_factory=lambda: {
+        'Kaggle Advanced Techniques': "tech",
+        'Kaggle Getting Started': "beginner",
+        'Kaggle Recipe Book': "recipe",
+        'Kaggle for Kids: One Smart Goose': "kids"
+    })
 
 
 CFG = Config()
@@ -113,9 +119,11 @@ def preprocess(data: pd.DataFrame) -> pd.DataFrame:
         lambda x: CFG.national_GDP[x[1]][x[0]],
         axis=1
     )
+    data["product"].replace(CFG.product_replace, inplace=True)
+    data = pd.get_dummies(data, columns=["store", "product"])
     data.set_index("row_id", inplace=True)
 
-    data.drop(["date", "country", "store", "product"], axis=1, inplace=True)
+    data.drop(["date", "country"], axis=1, inplace=True)
 
     return data
 
@@ -126,6 +134,7 @@ target_value = train_data["num_sold"].copy()
 train_data.drop(["num_sold"], axis=1, inplace=True)
 print("train_data:", train_data.shape)
 print("test_data: ", test_data.shape)
+print(train_data.columns)
 # %%
 # lgb parameter tuning
 match PARAM_SEARCH:
@@ -146,19 +155,18 @@ match PARAM_SEARCH:
     case False:
         params = {
             'feature_pre_filter': False,
-            'lambda_l1': 1.5962295482331676,
-            'lambda_l2': 6.51631379485157e-07,
-            'num_leaves': 8,
-            'feature_fraction': 0.82,
-            'bagging_fraction': 0.94782375381206,
-            'bagging_freq': 4,
-            'min_child_samples': 25
+            'lambda_l1': 1.393096389474614e-06,
+            'lambda_l2': 3.320829405390036,
+            'num_leaves': 137,
+            'feature_fraction': 0.62,
+            'bagging_fraction': 1.0,
+            'bagging_freq': 0,
+            'min_child_samples': 5
         }
-        # roc_auc Score: 0.9237822837583836
 # %%
 # lightgbm model
 print(params)
-lgb_model = lgb.LGBMClassifier(**params, num_iterations=500)
+lgb_model = lgb.LGBMRegressor(**params, num_iterations=500)
 lgb_model.fit(
     train_data,
     target_value,
