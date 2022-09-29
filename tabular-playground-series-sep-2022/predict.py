@@ -4,6 +4,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 import datetime
 # Third party
+from sklearn.model_selection import GroupKFold
+from sklearn.metrics import mean_absolute_percentage_error
 import plotly.express as px
 import optuna.integration.lightgbm as opt_lgb
 import lightgbm as lgb
@@ -137,6 +139,7 @@ print("test_data: ", test_data.shape)
 print(train_data.columns)
 # %%
 # lgb parameter tuning
+
 match PARAM_SEARCH:
     case True:
         train_set = lgb.Dataset(train_data, target_value)
@@ -163,32 +166,50 @@ match PARAM_SEARCH:
             'bagging_freq': 0,
             'min_child_samples': 5
         }
+        # SMAPE 0.1856215762218267
 # %%
 # lightgbm model
 print(params)
-lgb_model = lgb.LGBMRegressor(**params, num_iterations=500)
-lgb_model.fit(
-    train_data,
-    target_value,
-    callbacks=[
-        # lgb.early_stopping(100),
-        lgb.log_evaluation(10),
-    ]
-)
+train_predict = [0] * len(train_data)
+test_predict = []
+score_list = []
 importance = pd.DataFrame(
     data={
         "col": train_data.columns,
-        "importance": lgb_model.feature_importances_
+        "importance": [0] * len(train_data.columns)
     }
-).sort_values(["importance"])
+)
+kf = GroupKFold(n_splits=4)
+for fold, (train_idx, val_idx) in enumerate(
+    kf.split(train_data, groups=train_data.year)
+):
+    lgb_model = lgb.LGBMRegressor(**params, num_iterations=1000)
+    lgb_model.fit(
+        train_data.iloc[train_idx],
+        target_value.iloc[train_idx],
+        callbacks=[
+            # lgb.early_stopping(100),
+            lgb.log_evaluation(10),
+        ]
+    )
+    test_predict.append(lgb_model.predict(test_data))
+    train_predict += lgb_model.predict(train_data) / 4
+    score = mean_absolute_percentage_error(
+        target_value.iloc[val_idx],
+        lgb_model.predict(train_data.iloc[val_idx])
+    )
+    score_list.append(score)
+    print(fold, score)
+    importance["importance"] += lgb_model.feature_importances_ / 4
+importance.sort_values(["importance"], inplace=True)
 fig = px.bar(importance, x="col", y="importance")
 fig.show()
+print("SMAPE", np.mean(score_list))
+print(mean_absolute_percentage_error(target_value, train_predict))
 # %%
 # predict
 res_df = pd.DataFrame(
-    data={
-        "num_sold": lgb_model.predict(test_data)
-    },
+    data={"num_sold": np.mean(test_predict, axis=0)},
     index=test_data.index
 )
 sub_df = pd.read_csv(CFG.sample_path, usecols=["row_id"])
