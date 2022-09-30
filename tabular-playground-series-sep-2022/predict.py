@@ -4,16 +4,17 @@ from pathlib import Path
 from dataclasses import dataclass, field
 import datetime
 # Third party
-from sklearn.model_selection import GroupKFold
-from sklearn.metrics import mean_absolute_percentage_error
-import plotly.express as px
-import optuna.integration.lightgbm as opt_lgb
-import lightgbm as lgb
 import pandas as pd
 import numpy as np
+from sklearn.model_selection import GroupKFold
+from sklearn.metrics import mean_absolute_percentage_error
+import optuna.integration.lightgbm as opt_lgb
+import lightgbm as lgb
 import holidays
+import plotly.express as px
 
-PARAM_SEARCH = True
+PARAM_SEARCH = False
+CREATE_IMAGE = True
 
 
 @dataclass
@@ -99,6 +100,8 @@ def preprocess(data: pd.DataFrame) -> pd.DataFrame:
     """
     preprocess
     """
+    data.set_index("row_id", inplace=True)
+    original_data = data[["date", "country", "store", "product"]].copy()
     data["date"] = pd.to_datetime(data["date"])
     for factor in (
         "day",
@@ -123,23 +126,22 @@ def preprocess(data: pd.DataFrame) -> pd.DataFrame:
     )
     data["product"].replace(CFG.product_replace, inplace=True)
     data = pd.get_dummies(data, columns=["store", "product"])
-    data.set_index("row_id", inplace=True)
 
     data.drop(["date", "country"], axis=1, inplace=True)
 
-    return data
+    return data, original_data
 
 
-train_data = preprocess(pd.read_csv(CFG.train_path))
-test_data = preprocess(pd.read_csv(CFG.test_path))
+train_data, train_orig = preprocess(pd.read_csv(CFG.train_path))
+test_data, test_orig = preprocess(pd.read_csv(CFG.test_path))
 target_value = train_data["num_sold"].copy()
+train_orig["num_sold"] = target_value
 train_data.drop(["num_sold"], axis=1, inplace=True)
 print("train_data:", train_data.shape)
 print("test_data: ", test_data.shape)
 print(train_data.columns)
 # %%
 # lgb parameter tuning
-
 match PARAM_SEARCH:
     case True:
         train_set = lgb.Dataset(train_data, target_value)
@@ -208,16 +210,75 @@ print("SMAPE", np.mean(score_list))
 print(mean_absolute_percentage_error(target_value, train_predict))
 # %%
 # predict
+
+
+def line_plot(data):
+    for country, store in [
+        (country, store)
+        for country in data["country"].unique()
+        for store in data["store"].unique()
+    ]:
+        select_data = data.query(f"country=='{country}' and store=='{store}'")
+        fig = px.line(
+            select_data,
+            x="date",
+            y="predict_num_sold",
+            color="product"
+        )
+        fig.update_layout(
+            margin={"r": 10, "t": 10, "l": 10, "b": 40},
+            height=600,
+            legend={
+                "yanchor": "top",
+                "y": 0.99,
+                "xanchor": "left",
+                "x": 0.01
+            },
+            title={
+                "text": f"{country}_{store}",
+                "font": {"size": 22, "color": "black"},
+                "x": 0.95,
+                "y": 0.99,
+            },
+            xaxis={
+                "rangeslider": {"visible": True, "thickness": 0.01},
+                "type": "date"
+            },
+        )
+        if CREATE_IMAGE:
+            fig.write_image(rf"src\predict_{country}_{store}.svg")
+        fig.show()
+
+
 res_df = pd.DataFrame(
     data={"num_sold": np.mean(test_predict, axis=0)},
     index=test_data.index
 )
-sub_df = pd.read_csv(CFG.sample_path, usecols=["row_id"])
-sub_df = sub_df.merge(
-    res_df,
-    left_on="row_id",
-    right_index=True
+sub_df = (
+    pd.read_csv(CFG.sample_path, usecols=["row_id"])
+    .merge(
+        res_df,
+        left_on="row_id",
+        right_index=True
+    )
 )
 print(sub_df.head(10))
+train_orig_pred = train_orig.merge(
+    pd.DataFrame({"predict_num_sold": train_predict}, index=train_data.index),
+    left_index=True,
+    right_index=True
+)
+test_orig_pred = (
+    test_orig
+    .merge(
+        sub_df,
+        left_index=True,
+        right_on="row_id"
+    )
+    .set_index("row_id")
+    .rename(columns={"num_sold": "predict_num_sold"})
+)
+pred_data = pd.concat([train_orig_pred, test_orig_pred], axis=0)
+line_plot(pred_data)
 sub_df.to_csv(CFG.result_folder / "result_submission.csv", index=False)
 # %%
